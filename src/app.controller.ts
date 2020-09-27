@@ -5,6 +5,11 @@ import { AppService } from './app.service';
 export class AppController {
   constructor(private readonly appService: AppService) { }
 
+  @Get()
+  index() {
+    return "Hello world";
+  }
+
   @Post("/expense-handler")
   async handleExpenseEvent(@Body("event") event): Promise<boolean> {
     const out = await this.appService.handleExpenseEvent(event);
