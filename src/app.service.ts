@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import * as fetch from "node-fetch";
 import {
   Rule,
-  EventLog,
   GQLQuery,
   DBEvent
 } from './domain.interfaces';
@@ -41,14 +40,14 @@ mutation createEvent($eventName: String!, $args: jsonb!) {
 }`;
 
     const query = { query: queryString, variables: { ...event_payload }, operationName: "createEvent" }
-    const json = await this.makeGQLCall(query);
+    const json = await AppService.makeGQLCall(query);
     if (json.data.insert_event_log.affected_rows >= 1) {
       return true;
     }
     return false;
   }
 
-  async makeGQLCall(query: GQLQuery): Promise<{ [key: string]: any }> {
+  static async makeGQLCall(query: GQLQuery): Promise<{ [key: string]: any }> {
     const response = await fetch('https://dev-expense.herokuapp.com/v1/graphql', {
       method: 'post',
       body: JSON.stringify(query),
@@ -61,6 +60,30 @@ mutation createEvent($eventName: String!, $args: jsonb!) {
     return json;
   }
 
+  static async ProcessRule(rule: { rule: Rule }, event) {
+    const queryString = `
+mutation createTodo($todo: [todos_insert_input!]!){
+  insert_todos(objects:$todo){
+    affected_rows
+  }
+}`;
+    let out = compare(event.data.new.args, rule.rule.condition);
+    if (out) {
+      if (rule.rule.action.name === "CREATE_EVENT") {
+        // create a todo
+        console.log("creating todo")
+        let response = await AppService.makeGQLCall({
+          query: queryString,
+          variables: {
+            todo: { title: rule.rule.action.args.name, due_date: rule.rule.action.args.due_date }
+          },
+          operationName: "createTodo"
+        });
+        console.log(response);
+      }
+      return rule;
+    }
+  }
 
   async handleEvent(event: DBEvent) {
     // for every event, get all rules
@@ -79,10 +102,16 @@ query getRules($condition: jsonb) {
       operationName: "getRules"
     }
 
-    const json = await this.makeGQLCall(query)
-    const rules: { rule: Rule }[] = json.data.rules;
-    const out = compare(event.data.new.args, rules[0].rule.condition);
-    console.log(out);
-    return out;
+    const json = await AppService.makeGQLCall(query)
+    let rules: { rule: Rule }[] = json.data.rules;
+    let out: boolean = false;
+    try {
+      rules = await Promise.all(rules.map(async (rule) => await AppService.ProcessRule(rule, event)));
+      return true;
+    }
+    catch (err) {
+      console.log(`error ${err}`)
+      return out;
+    }
   }
 }
